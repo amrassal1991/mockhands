@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enhanced AI Call Simulator</title>
+    <!-- Chosen Palette: Dark Theme - A modern, dark-themed palette using a near-black background (#0a0a0a), slightly lighter containers (#1a1a1a), and a vibrant blue accent (#1a6cd0) for interactive elements. Text is white for high contrast. Success and error states are indicated by green (#10b981) and red (#ef4444) respectively, providing clear visual feedback. -->
+    <!-- Application Structure Plan: The application is structured as a single-page dashboard centered around a three-bot AI simulation model. The UI is divided into three main areas: 1) A top-level 'Settings' bar for configuring the simulation (Tone, Language, Timeout, Customer Type, Topic). 2) The core 'Interaction' view with the chat transcript and controls. 3) A right-hand 'Live Analysis' sidebar where the Quality Coach Bot provides real-time feedback. A post-call modal provides the final report from the Organizer Bot, including an export function and a conditional survey. This structure was chosen to provide a clear, logical flow for the user: configure, interact, analyze, and review. It separates the distinct functions of the simulation (interaction vs. analysis) for better usability, while the three-bot JS architecture mirrors this functional separation in the code. -->
+    <!-- Visualization & Content Choices: The primary content is the chat log, a familiar and intuitive text-based presentation. Key metrics from the Quality Coach are presented as numeric scores with emoji indicators (💡 for a new idea, ℹ️ for info) and concise text feedback, making them quickly scannable. The key new visualization is a bar chart in the final report (Goal: Show Change), generated with Chart.js, which tracks the quality score turn-by-turn, allowing for easy identification of trends and pivotal moments in the conversation. The final report itself (Goal: Organize/Inform) is a structured text block with clear headings, making complex analysis digestible. User feedback is collected via standard form elements (range slider for rating, textarea for verbatim) for ease of use. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-main: #0a0a0a;
+            --bg-container: #1a1a1a;
+            --bg-message-ai: #2d2d2d;
+            --bg-message-user: #1a6cd0;
+            --text-main: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent-color: #1a6cd0;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --quality-bg: #2d2d2d; /* Darker background for quality panel */
+            --quality-border: #444;
+            --quality-score-good: #10b981; /* Green for good score */
+            --quality-score-bad: #ef4444; /* Red for bad score */
+            --quality-score-neutral: #f59e0b; /* Amber for neutral/needs improvement */
+            color-scheme: dark; /* Tells browser this is a dark theme */
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            overflow: hidden;
+        }
+
+        .chat-container::-webkit-scrollbar { width: 6px; }
+        .chat-container::-webkit-scrollbar-track { background: #1a1a1a; }
+        .chat-container::-webkit-scrollbar-thumb { background: #888; border-radius: 3px;}
+        .chat-container::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        .tooltip {
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .has-tooltip:hover .tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        #loader-overlay {
+            z-index: 50;
+        }
+
+        /* Styles for modals */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: var(--bg-container);
+            color: var(--text-main);
+            border-radius: 10px;
+            padding: 2rem;
+            min-width: 320px;
+            max-width: 90vw;
+            box-shadow: 0 4px 32px rgba(0,0,0,0.4);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .modal-content label {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            font-size: 1rem;
+        }
+        .modal-content input[type="text"],
+        .modal-content input[type="number"],
+        .modal-content select,
+        .modal-content textarea {
+            margin-top: 0.2rem;
+            border-radius: 6px;
+            border: 1px solid var(--quality-border);
+            background: var(--quality-bg);
+            color: var(--text-main);
+            padding: 0.4rem 0.6rem;
+            font-size: 1rem;
+        }
+        .modal-content textarea {
+            resize: vertical;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+        .modal-actions button {
+            background: var(--accent-color);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .modal-actions button:hover {
+            background: #0e4a8a;
+        }
+    </style>
+</head>
+
+<body class="flex h-screen w-screen text-sm">
+
+    <!-- Main container -->
+    <div class="flex flex-col h-full w-full bg-gray-100">
+
+        <!-- Header/Settings -->
+        <header class="flex items-center justify-between p-3 bg-white border-b border-gray-200 shadow-sm bg-opacity-10 backdrop-filter backdrop-blur-lg">
+            <h1 class="text-xl font-bold text-gray-200">AI Call Simulator</h1>
+            <div class="flex items-center space-x-4">
+                <!-- Settings and Persona Buttons -->
+                <button id="open-settings-btn" class="p-2 bg-gray-700 rounded-full text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" title="Settings">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 4.095a.75.75 0 01-.137.935l-1.39 1.39a.75.75 0 00-.22.53v.528c0 .198-.079.388-.22.53l-1.39 1.39a.75.75 0 01-.935.137l-.528-.22a.75.75 0 00-.53.22l-1.39 1.39a.75.75 0 01-.137.935l-.22.528a.75.75 0 00.22.53l1.39 1.39a.75.75 0 01.137.935l.528.22a.75.75 0 00.53-.22l1.39-1.39a.75.75 0 01.22-.53v-.528c0-.198.079-.388.22-.53l1.39-1.39a.75.75 0 01.935-.137l.528.22a.75.75 0 00.53-.22l1.39-1.39a.75.75 0 01.137-.935l.22-.528a.75.75 0 00-.22-.53l-1.39-1.39a.75.75 0 01-.137-.935l-.528-.22a.75.75 0 00-.53-.22zm-3 4.25a.75.75 0 100 1.5.75.75 0 000-1.5zM12 9a.75.75 0 100 1.5.75.75 0 000-1.5zM15 9a.75.75 0 100 1.5.75.75 0 000-1.5z" clip-rule="evenodd" /></svg>
+                </button>
+                <button id="open-persona-btn" class="p-2 bg-gray-700 rounded-full text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" title="Persona">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" fill-rule="evenodd"/></svg>
+                </button>
+                <button id="new-call-btn" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75">
+                    New Call
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="flex flex-1 overflow-hidden p-4 gap-4">
+
+            <!-- Left Panel: Chat -->
+            <div class="flex flex-col w-2/3 bg-white rounded-lg shadow-md border border-gray-200 bg-opacity-5 backdrop-filter backdrop-blur-lg">
+                <div id="chat-messages" class="flex-1 p-4 space-y-4 overflow-y-auto chat-container">
+                    <!-- Messages will be injected here -->
+                </div>
+                <div class="p-4 border-t border-gray-200 border-opacity-20">
+                    <div id="status" class="text-center text-gray-500 mb-2 h-5"></div>
+                    <div class="flex items-center space-x-2">
+                        <textarea id="message-input" class="flex-1 p-2 border border-gray-700 rounded-md bg-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Speak or type your message..." rows="2"></textarea>
+                        <button id="mic-btn" class="p-3 bg-gray-700 rounded-full text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z"/><path d="M5.5 11.5a5.5 5.5 0 0011 0h-1.5a4 4 0 01-8 0H5.5z"/><path d="M3 10a.5.5 0 00.5.5v1a4.5 4.5 0 008.552 2.036.5.5 0 10-.9-.408A3.5 3.5 0 018.5 14.5v-1a.5.5 0 00-1 0v1a.5.5 0 001 0v-1a.5.5 0 00-1 0v1a.5.5 0 001 0V12a.5.5 0 00-1 0v.5a3.5 3.5 0 01-7 0v-.5a.5.5 0 00-1 0v.5A4.5 4.5 0 008 15.91V16H5a1 1 0 000 2h10a1 1 0 000-2h-3v-.09A4.5 4.5 0 0016.5 11.5v-.5a.5.5 0 00-1 0v.5a3.5 3.5 0 01-7 0v-.5a.5.5 0 00-.5-.5H3z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Live Analysis -->
+            <div class="flex flex-col w-1/3 bg-white rounded-lg shadow-md border border-gray-200 bg-opacity-5 backdrop-filter backdrop-blur-lg">
+                <h2 class="p-4 text-lg font-bold border-b border-gray-200 border-opacity-20 text-gray-200">Live Quality Analysis</h2>
+                <div id="quality-feedback-panel" class="flex-1 p-4 space-y-3 overflow-y-auto">
+                   <div class="text-gray-500 text-center pt-8">Waiting for first interaction...</div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 class="text-xl font-bold">Settings</h2>
+            <div class="space-y-4">
+                <label for="tone-select">Tone:
+                    <select id="tone-select" class="w-full">
+                        <option value="Professional">Professional</option>
+                        <option value="Empathetic">Empathetic</option>
+                        <option value="Direct">Direct</option>
+                        <option value="Friendly">Friendly</option>
+                    </select>
+                </label>
+                <label for="timeout-input">Auto-Send (s):
+                    <input type="number" id="timeout-input" value="3" min="1" max="10" class="w-full">
+                </label>
+                <label for="lang-select">Language:
+                    <select id="lang-select" class="w-full">
+                        <option value="en-US">English</option>
+                        <option value="es-ES">Spanish</option>
+                    </select>
+                </label>
+            </div>
+            <div class="modal-actions">
+                <button id="close-settings-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Persona Modal -->
+    <div id="persona-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 class="text-xl font-bold">Persona Settings</h2>
+            <div class="space-y-4">
+                <label for="customer-type-select">Customer Type:
+                    <select id="customer-type-select" class="w-full">
+                        <option value="Any">Any</option>
+                        <option value="Frustrated">Frustrated</option>
+                        <option value="Inquiry">Inquiry</option>
+                        <option value="Rude">Rude</option>
+                        <option value="Fraudster (Simulated)">Fraudster (Simulated)</option>
+                    </select>
+                </label>
+                <label for="topic-select">Topic:
+                    <select id="topic-select" class="w-full">
+                        <option value="Any">Any</option>
+                        <option value="Internet Service">Internet Service</option>
+                        <option value="Internet Speed">Internet Speed</option>
+                        <option value="Billing">Billing</option>
+                        <option value="Account Security">Account Security</option>
+                        <option value="Technical Support">Technical Support</option>
+                        <option value="Service Complaint">Service Complaint</option>
+                    </select>
+                </label>
+            </div>
+            <div class="modal-actions">
+                <button id="close-persona-btn">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Report/Survey Modal -->
+    <div id="report-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-40">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col bg-gray-900 text-white">
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h2 class="text-2xl font-bold">Call Report & Survey</h2>
+                <button id="close-report-btn" class="text-gray-500 hover:text-gray-200">&times;</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6">
+                <!-- Report Content -->
+                <div id="report-content">
+                    <h3 class="text-xl font-semibold mb-4">Interaction Analysis</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div>
+                            <h4 class="font-bold text-gray-400 mb-2">Call Summary</h4>
+                            <p id="report-summary" class="text-gray-300 bg-gray-800 p-3 rounded-md"></p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-gray-400 mb-2">Key Metrics</h4>
+                            <div id="report-metrics" class="space-y-2 text-gray-300"></div>
+                        </div>
+                    </div>
+                     <div>
+                        <h4 class="font-bold text-gray-400 mb-2">Quality Score Trend</h4>
+                        <div class="chart-container relative h-64 w-full max-w-2xl mx-auto">
+                            <canvas id="quality-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="mt-6">
+                       <h4 class="font-bold text-gray-400 mb-2">Organizer Bot Assessment</h4>
+                       <div id="organizer-assessment" class="text-gray-300 bg-gray-800 p-4 rounded-md space-y-3"></div>
+                    </div>
+                </div>
+                <!-- Survey Section -->
+                <div id="survey-section" class="hidden mt-8 border-t border-gray-700 pt-6">
+                    <h3 class="text-xl font-semibold mb-2">How did we do?</h3>
+                    <p class="text-gray-300 mb-4">Your feedback helps us improve.</p>
+                    <div class="mb-4">
+                        <label for="satisfaction-rating" class="block font-medium text-gray-400 mb-2">Overall Satisfaction (1-10): <span id="rating-value" class="font-bold text-blue-400">5</span></label>
+                        <input type="range" id="satisfaction-rating" min="1" max="10" value="5" class="w-full">
+                    </div>
+                    <div class="mb-4">
+                        <label for="verbatim-feedback" class="block font-medium text-gray-400 mb-2">Additional Comments:</label>
+                        <textarea id="verbatim-feedback" rows="4" class="w-full p-2 border border-gray-700 rounded-md bg-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Tell us more about your experience..."></textarea>
+                    </div>
+                    <button id="submit-survey-btn" class="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75">Submit Feedback</button>
+                </div>
+            </div>
+            <div class="p-4 bg-gray-800 border-t border-gray-700 flex justify-end">
+                <button id="export-report-btn" class="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75">Export Report (.txt)</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loader Overlay -->
+    <div id="loader-overlay" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center">
+        <div class="flex flex-col items-center">
+            <svg class="animate-spin h-10 w-10 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-4 text-lg text-gray-300 font-semibold" id="loader-text">AI is thinking...</p>
+        </div>
+    </div>
+
+    <script type="module">
+        // --- DATA ---
+        const complaints = {
+            internet: [{id: "int_001",type: "Service Interruption",scenario: "Internet service has been intermittent for the past 24 hours, affecting business operations",initialComplaint: { "en-US": "My business internet keeps dropping every hour! We've lost thousands in sales because our payment system is down. This is completely unacceptable for a business account!", "es-ES": "¡El internet de mi negocio se cae cada hora! Hemos perdido miles en ventas porque nuestro sistema de pago no funciona. ¡Esto es completamente inaceptable para una cuenta de negocios!"}, customerName: "Maria Garcia",difficulty: "high", customerType: "Frustrated", topic: "Internet Service"},{id: "int_002",type: "Speed Issues",scenario: "Business customer reporting significantly slower speeds than promised",initialComplaint: { "en-US": "We're only getting 50Mbps when we're paying for 300Mbps. Our video conferences with clients keep freezing!", "es-ES": "Solo estamos recibiendo 50Mbps cuando pagamos por 300Mbps. ¡Nuestras videoconferencias con clientes se congelan!"}, customerName: "John Smith",difficulty: "medium", customerType: "Inquiry", topic: "Internet Speed"}],
+            billing: [{id: "bill_001",type: "Incorrect Charge",scenario: "Customer sees an unexpected charge on their monthly bill",initialComplaint: { "en-US": "Why was I charged for 'premium support'? I never asked for that and I want it removed immediately.", "es-ES": "¿Por qué me cobraron por 'soporte premium'? Nunca lo pedí y quiero que lo quiten de inmediato."}, customerName: "David Chen",difficulty: "low", customerType: "Inquiry", topic: "Billing"}],
+            fraud: [
+                {
+                    id: "fraud_001",
+                    type: "Unauthorized Activity",
+                    scenario: "Customer reports suspicious activity on their account",
+                    initialComplaint: { "en-US": "Someone used my account to order services I didn't authorize! This is fraud!", "es-ES": "¡Alguien usó mi cuenta para pedir servicios que no autoricé! ¡Esto es un fraude!"},
+                    customerName: "Sarah Connor",
+                    difficulty: "critical",
+                    customerType: "Fraudster (Simulated)",
+                    topic: "Account Security"
+                }
+            ],
+            technical: [
+                {
+                    id: "tech_001",
+                    type: "Technical Support",
+                    scenario: "Customer needs help setting up new equipment",
+                    initialComplaint: { "en-US": "I just got my new modem, but I can't get it to connect to the internet. Can you walk me through it?", "es-ES": "Acabo de recibir mi nuevo módem, pero no puedo conectarlo a internet. ¿Puedes guiarme?"},
+                    customerName: "Robert Johnson",
+                    difficulty: "low",
+                    customerType: "Inquiry",
+                    topic: "Technical Support"
+                }
+            ],
+            rude: [
+                {
+                    id: "rude_001",
+                    type: "Service Complaint",
+                    scenario: "Customer is extremely angry about a recent service interaction",
+                    initialComplaint: { "en-US": "This is the third time I've called about this! Your service is absolutely terrible, and I want to speak to a supervisor NOW!", "es-ES": "¡Esta es la tercera vez que llamo por esto! ¡Su servicio es absolutamente terrible y quiero hablar con un supervisor AHORA MISMO!"},
+                    customerName: "Karen Miller",
+                    difficulty: "critical",
+                    customerType: "Rude",
+                    topic: "Service Complaint"
+                }
+            ]
+        };
+
+        // --- CORE APPLICATION LOGIC ---
+        class AppController {
+            constructor() {
+                // DOM Binding
+                this.micBtn = document.getElementById('mic-btn');
+                this.messageInput = document.getElementById('message-input');
+                this.chatMessages = document.getElementById('chat-messages');
+                this.statusEl = document.getElementById('status');
+                this.qualityPanel = document.getElementById('quality-feedback-panel');
+                this.loader = document.getElementById('loader-overlay');
+                this.loaderText = document.getElementById('loader-text');
+                
+                // Moved settings inputs to modals, but retain references
+                this.toneSelect = document.getElementById('tone-select');
+                this.langSelect = document.getElementById('lang-select');
+                this.timeoutInput = document.getElementById('timeout-input');
+                this.customerTypeSelect = document.getElementById('customer-type-select');
+                this.topicSelect = document.getElementById('topic-select');
+
+                this.newCallBtn = document.getElementById('new-call-btn');
+                this.reportModal = document.getElementById('report-modal');
+                this.closeReportBtn = document.getElementById('close-report-btn');
+                this.exportReportBtn = document.getElementById('export-report-btn');
+                this.surveySection = document.getElementById('survey-section');
+                this.satisfactionRating = document.getElementById('satisfaction-rating');
+                this.ratingValue = document.getElementById('rating-value');
+                this.submitSurveyBtn = document.getElementById('submit-survey-btn');
+
+                // Modal buttons and modals
+                this.openSettingsBtn = document.getElementById('open-settings-btn');
+                this.settingsModal = document.getElementById('settings-modal');
+                this.closeSettingsBtn = document.getElementById('close-settings-btn');
+                this.openPersonaBtn = document.getElementById('open-persona-btn');
+                this.personaModal = document.getElementById('persona-modal');
+                this.closePersonaBtn = document.getElementById('close-persona-btn');
+
+
+                // State
+                this.state = {
+                    isRecognizing: false,
+                    currentTranscript: '',
+                    silenceTimer: null,
+                    turnCount: 0,
+                    callInProgress: false,
+                    currentScenario: {},
+                    chatHistory: [],
+                    qualityScores: [],
+                    fullConversationForReport: [],
+                };
+                
+                // Services / Bots
+                // Pass a reference to the current timeout value to SpeechService
+                this.speechService = new SpeechService(
+                    () => this.state.isRecognizing,
+                    (isRecognizing) => this.setRecognitionState(isRecognizing),
+                    (transcript) => this.handleRecognitionResult(transcript),
+                    (error) => this.handleRecognitionError(error),
+                    () => parseInt(this.timeoutInput.value, 10) * 1000 // Function to get live timeout value
+                );
+                
+                this.geminiAPI = new GeminiAPIService();
+
+                this.bindEventListeners();
+                this.startNewCall();
+            }
+
+            bindEventListeners() {
+                this.micBtn.addEventListener('click', () => this.speechService.toggleRecognition(this.state.currentLanguage));
+                this.messageInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage(this.messageInput.value);
+                    }
+                });
+                this.newCallBtn.addEventListener('click', () => this.startNewCall());
+                this.closeReportBtn.addEventListener('click', () => this.reportModal.classList.add('hidden'));
+                this.exportReportBtn.addEventListener('click', () => this.exportReport());
+                this.satisfactionRating.addEventListener('input', (e) => {
+                    this.ratingValue.textContent = e.target.value;
+                });
+
+                // Modal event listeners
+                this.openSettingsBtn.addEventListener('click', () => this.settingsModal.classList.remove('hidden'));
+                this.closeSettingsBtn.addEventListener('click', () => this.settingsModal.classList.add('hidden'));
+                this.openPersonaBtn.addEventListener('click', () => this.personaModal.classList.remove('hidden'));
+                this.closePersonaBtn.addEventListener('click', () => this.personaModal.classList.add('hidden'));
+            }
+
+            startNewCall() {
+                // Reset state
+                this.state.turnCount = 0;
+                this.state.callInProgress = true;
+                this.state.chatHistory = [];
+                this.state.qualityScores = [];
+                this.state.fullConversationForReport = [];
+                this.messageInput.value = '';
+                this.chatMessages.innerHTML = '';
+                this.qualityPanel.innerHTML = '<div class="text-gray-500 text-center pt-8">Waiting for first interaction...</div>'; // Clear quality panel
+                this.reportModal.classList.add('hidden');
+                this.surveySection.classList.add('hidden');
+                this.messageInput.disabled = false;
+                this.micBtn.disabled = false;
+                
+                // Get settings
+                const lang = this.langSelect.value;
+                this.state.currentLanguage = lang;
+                const selectedCustomerType = this.customerTypeSelect.value;
+                const selectedTopic = this.topicSelect.value;
+                
+                // Select a random scenario based on filters
+                let availableScenarios = Object.values(complaints).flat();
+
+                if (selectedCustomerType !== 'Any') {
+                    availableScenarios = availableScenarios.filter(s => s.customerType === selectedCustomerType);
+                }
+                if (selectedTopic !== 'Any') {
+                    availableScenarios = availableScenarios.filter(s => s.topic === selectedTopic);
+                }
+
+                if (availableScenarios.length === 0) {
+                    this.addMessage(lang === 'es-ES' ? 'No se encontraron escenarios con los filtros seleccionados. Reiniciando con cualquier escenario.' : 'No scenarios found with selected filters. Resetting with any scenario.', 'system');
+                    availableScenarios = Object.values(complaints).flat(); // Fallback to all scenarios
+                }
+
+                this.state.currentScenario = availableScenarios[Math.floor(Math.random() * availableScenarios.length)];
+                
+                const scenarioText = this.state.currentScenario.initialComplaint[lang];
+                this.state.customerPersona = this.getPersonaPrompt(this.state.currentScenario.customerName, scenarioText);
+
+                // Initial system notification for agent to start the call
+                this.addMessage(this.state.currentLanguage === 'es-ES' ? 'Notificación: Inicie la llamada ahora.' : 'Notification: Start the call now.', 'system');
+                
+                // No initial agent message is added here. The agent will speak or type their first message.
+                // The customer AI's first response is triggered by the agent's first actual message.
+            }
+
+            getPersonaPrompt(name, complaint) {
+                 const lang = this.langSelect.value;
+                 if(lang === 'es-ES') {
+                    return `Eres un cliente de habla hispana llamado ${name}. Tu problema es: "${complaint}". Estás frustrado pero intentas ser educado. Mantén tus respuestas relativamente cortas. NO resuelvas el problema demasiado rápido. Si el agente te da una buena solución, acéptala.`;
+                 }
+                 return `You are a customer named ${name}. Your issue is: "${complaint}". You are frustrated but trying to be polite. Keep your responses relatively short. DO NOT solve the issue too quickly. If the agent gives a good resolution, accept it.`;
+            }
+
+            setRecognitionState(isRecognizing) {
+                this.state.isRecognizing = isRecognizing;
+                this.micBtn.classList.toggle('bg-red-500', isRecognizing);
+                this.micBtn.classList.toggle('text-white', isRecognizing);
+                this.statusEl.textContent = isRecognizing ? (this.state.currentLanguage === 'es-ES' ? 'Escuchando...' : 'Listening...') : '';
+            }
+
+            handleRecognitionResult(transcript) {
+                this.messageInput.value = transcript;
+                this.state.currentTranscript = transcript;
+                
+                // Voice commands
+                const command = transcript.toLowerCase().trim();
+                if (command.endsWith('send') || command.endsWith('enviar')) {
+                    const messageToSend = transcript.replace(/send|enviar/gi, '').trim();
+                    this.sendMessage(messageToSend);
+                    return;
+                }
+                if (command.endsWith('delete') || command.endsWith('borrar')) {
+                    this.messageInput.value = '';
+                    this.state.currentTranscript = '';
+                    this.statusEl.textContent = this.state.currentLanguage === 'es-ES' ? 'Borrado. Escuchando de nuevo...' : 'Deleted. Listening again...';
+                    this.speechService.startRecognition(); // Keep recognition active for retry
+                    return;
+                }
+                
+                // Reset and start auto-send timer
+                this.speechService.resetSilenceTimer();
+            }
+
+            handleRecognitionError(error) {
+                this.statusEl.textContent = `Error: ${error}`;
+            }
+
+            async sendMessage(text) {
+                if (!text || !this.state.callInProgress) return;
+
+                this.speechService.stopRecognition(); // Stop mic when agent sends message
+                this.speechService.clearSilenceTimer();
+                this.messageInput.value = '';
+                this.state.currentTranscript = '';
+
+                this.addMessage(text, 'user');
+                this.state.chatHistory.push({ role: 'user', parts: [{ text }] });
+                this.state.fullConversationForReport.push({ speaker: 'Agent', text });
+
+
+                // The turn count starts after the *first* agent message that gets a customer response
+                // So, only increment turnCount if the chat history indicates an interaction is actually happening
+                if (this.state.fullConversationForReport.length > 1) { // Agent's first message + Customer's first message = 2 entries
+                    this.state.turnCount++;
+                }
+                
+                if (this.state.turnCount > 0) { // Only clear "Waiting for first interaction" after first proper turn
+                   if (this.qualityPanel.innerHTML.includes("Waiting for first interaction")) {
+                       this.qualityPanel.innerHTML = '';
+                   }
+                }
+                
+                this.showLoader(true, 'Customer is responding...');
+
+                // Get Customer Response
+                const customerResponse = await this.geminiAPI.generateContent(this.buildPrompt(this.state.customerPersona));
+                this.addMessage(customerResponse, 'ai');
+                this.state.chatHistory.push({ role: 'model', parts: [{ text: customerResponse }] });
+                this.state.fullConversationForReport.push({ speaker: 'Customer', text: customerResponse });
+
+                // Get Quality Coach Feedback - only if a real interaction has occurred (i.e., agent sent a message and customer responded)
+                if (this.state.fullConversationForReport.length >= 2) { // At least one agent, one customer message
+                    this.showLoader(true, 'Quality Coach is analyzing...');
+                    const qualityFeedback = await this.getQualityFeedback(text, customerResponse);
+                    this.displayQualityFeedback(qualityFeedback);
+                    this.state.qualityScores.push(qualityFeedback.score);
+                }
+
+                this.showLoader(false);
+                
+                // Automatically restart recognition after AI response if not muted
+                // This handles the flow where AI speaks, then agent mic reactivates
+                // Also handles the initial flow after customer's first response
+                this.speechService.startRecognition();
+
+                // Check for call end condition
+                if (this.state.turnCount >= 6 + Math.floor(Math.random() * 5)) { // 6-10 turns
+                    this.endCall();
+                }
+            }
+
+            async getQualityFeedback(agentMessage, customerMessage) {
+                const lang = this.langSelect.value;
+                // Updated prompt to reflect S4 guidelines and request examples
+                const prompt = lang === 'es-ES' ? 
+                    `Como especialista en control de calidad de S4, evalúa la respuesta del agente basándote en las directrices de S4 (Inicio, Resolver, Vender, Resumir) y los comportamientos fundamentales (Tono, Escucha activa, Gestión de contacto, Reconocimiento/Responsabilidad, Construcción de relación/Preocupación).
+                    Conversación:
+                    Cliente: "${customerMessage}"
+                    Agente: "${agentMessage}"
+                    
+                    Proporciona una puntuación de 0 a 100 y un comentario breve y constructivo. Incluye un ejemplo de "Palabras que funcionan" si la respuesta del agente podría mejorarse, o un "Ejemplo de excelencia" si fue excepcional, basado en las directrices de S4.
+                    Devuelve solo un objeto JSON con las claves "score" (número), "comment" (cadena) y "example" (cadena, opcional).` :
+                    `As an S4 Quality Assurance Specialist, evaluate the agent's response based on the S4 guidelines (Start, Solve, Sell, Summarize) and foundational behaviors (Tone, Active Listening, Contact Management, Acknowledge/Responsibility, Build Rapport/Concern).
+                    Conversation:
+                    Customer: "${customerMessage}"
+                    Agent: "${agentMessage}"
+                    
+                    Provide a score from 0-100 and a brief, constructive comment. Include a "Words that Work" example if the agent's response could be improved, or an "Example of Excellence" if it was outstanding, based on S4 guidelines.
+                    Return only a JSON object with keys "score" (number), "comment" (string) and "example" (string, optional).`;
+                
+                try {
+                    const responseText = await this.geminiAPI.generateContent(prompt);
+                    const cleanedText = responseText.replace(/```json|```/g, '').trim();
+                    return JSON.parse(cleanedText);
+                } catch (e) {
+                    console.error("Failed to parse quality feedback:", e);
+                    return { score: 0, comment: "Error getting quality feedback." };
+                }
+            }
+
+            addMessage(text, sender, name) {
+                const div = document.createElement('div');
+                div.className = `w-full flex ${sender === 'user' ? 'justify-end' : 'justify-start'}`;
+                
+                const messageBubble = document.createElement('div');
+                let bubbleClass;
+                let senderName = '';
+
+                switch (sender) {
+                    case 'user':
+                        bubbleClass = 'bg-blue-600 text-white';
+                        senderName = 'Agent';
+                        break;
+                    case 'ai':
+                        bubbleClass = 'bg-gray-700 text-gray-200';
+                        senderName = this.state.currentScenario.customerName || 'Customer';
+                        break;
+                    case 'system':
+                        bubbleClass = 'bg-yellow-800 text-yellow-100 border border-yellow-600';
+                        senderName = 'System';
+                        break;
+                }
+
+                messageBubble.className = `max-w-md lg:max-w-lg p-3 rounded-lg shadow ${bubbleClass}`;
+                messageBubble.innerHTML = `<div class="font-bold text-sm mb-1">${senderName}</div><div>${text}</div>`;
+                
+                div.appendChild(messageBubble);
+                this.chatMessages.appendChild(div);
+                this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+            }
+
+            displayQualityFeedback({ score, comment, example }) { // Added 'example' parameter
+                const div = document.createElement('div');
+                div.className = 'p-3 rounded-lg bg-gray-800 border border-gray-700 shadow-sm';
+
+                let scoreColorClass;
+                if (score >= 85) scoreColorClass = 'text-green-400 bg-green-900';
+                else if (score >= 60) scoreColorClass = 'text-yellow-400 bg-yellow-900';
+                else scoreColorClass = 'text-red-400 bg-red-900';
+
+                // Updated quality score formula and added S4 guidelines
+                const qualityScoreFormula = `The Quality Score is based on S4 Guidelines:
+- S1: Start (Greeting, Empathy, Ownership, Agenda)
+- S2: Solve (Obtain Info, Resolve Issue, Build Value)
+- S3: Sell (Transition, Present Offer, Overcome Objections, Close Sale)
+- S4: Summarize (Summarize Actions, Close Contact, Documentation)
+- Foundational Behaviors (Tone, Active Listening, Contact Management, Acknowledge/Responsibility, Build Rapport/Concern).
+
+Scores are penalized for critical failures (e.g., Rudeness, Account Actions).
+Higher scores reflect "Highly Effective" behaviors, often with specific examples provided.`;
+
+                let exampleHtml = '';
+                if (example) {
+                    exampleHtml = `<p class="text-sm text-gray-400 mt-2"><strong>Example:</strong> <em>"${example}"</em></p>`;
+                }
+
+                div.innerHTML = `
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="font-bold text-gray-400">Turn ${this.state.turnCount} Analysis</span>
+                        <div class="flex items-center space-x-2">
+                             <span class="text-xl text-blue-400">💡</span>
+                             <div class="has-tooltip relative">
+                                <span class="text-xl cursor-pointer text-blue-400">ℹ️</span>
+                                <div class="tooltip absolute bottom-full mb-2 w-64 bg-gray-800 text-white text-xs rounded p-2 z-10 -translate-x-1/2 left-1/2">
+                                    ${qualityScoreFormula.replace(/\n/g, '<br>')}
+                                </div>
+                             </div>
+                             <span class="font-bold text-lg px-2 py-0.5 rounded ${scoreColorClass}">${score}</span>
+                        </div>
+                    </div>
+                    <p class="text-gray-300">${comment}</p>
+                    ${exampleHtml}
+                `;
+                this.qualityPanel.appendChild(div);
+                this.qualityPanel.scrollTop = this.qualityPanel.scrollHeight;
+            }
+            
+            buildPrompt(persona) {
+                const tone = this.toneSelect.value;
+                const lang = this.langSelect.value;
+                const interactionLimit = `This is turn number ${this.state.turnCount}. The call should not exceed 10 turns.`;
+                let closingInstruction = '';
+                if(this.state.turnCount >= 6) {
+                    closingInstruction = lang === 'es-ES' ? 
+                        'Empieza a buscar una manera de concluir la conversación.' :
+                        'Start looking for a way to wrap up the conversation.';
+                }
+
+                const basePrompt = `${persona} Your tone should be ${tone}. Respond in the language: ${lang}. ${interactionLimit} ${closingInstruction}`;
+                
+                // Construct a temporary history for the prompt
+                const historyForPrompt = [...this.state.chatHistory];
+                historyForPrompt.unshift({
+                    role: 'user',
+                    parts: [{ text: basePrompt }]
+                });
+
+                return historyForPrompt;
+            }
+            
+            showLoader(show, text = 'AI is thinking...') {
+                this.loaderText.textContent = text;
+                this.loader.classList.toggle('hidden', !show);
+            }
+
+            async endCall() {
+                this.state.callInProgress = false;
+                this.speechService.stopRecognition();
+                this.messageInput.disabled = true;
+                this.micBtn.disabled = true;
+                this.statusEl.textContent = this.state.currentLanguage === 'es-ES' ? 'Llamada finalizada.' : 'Call Ended.';
+                this.addMessage(this.statusEl.textContent, 'system');
+                
+                this.showLoader(true, 'Organizer Bot is generating the final report...');
+                await this.generateAndShowReport();
+                this.showLoader(false);
+            }
+
+            async generateAndShowReport() {
+                const lang = this.langSelect.value;
+                const reportPrompt = lang === 'es-ES' ?
+                     `Como un Bot Organizador de IA, analiza la siguiente transcripción de la llamada y las puntuaciones de calidad. El informe debe ser preciso, bien estructurado y útil para mejorar la curva de aprendizaje del agente, basándose en las directrices de calidad de S4.
+                      Transcripción: ${JSON.stringify(this.state.fullConversationForReport)}
+                      Puntuaciones de calidad por turno: ${this.state.qualityScores.join(', ')}
+                      Crea un informe con: 1. Un resumen conciso de la llamada. 2. Una evaluación detallada del rendimiento del agente según las directrices de S4 (fortalezas/debilidades), incluyendo cómo se aplica el esquema de puntuación. 3. Recomendaciones de autocuración para el sistema (por ejemplo, "Sugerir modificar el guion de quejas para manejar mejor X").
+                      Devuelve solo un objeto JSON con las claves "summary", "assessment" y "recommendations".` :
+                     `As an AI Organizer Bot, analyze the following call transcript and quality scores. The report should be accurate, well-structured, and resourceful for improving the agent's learning curve, based on S4 quality guidelines.
+                      Transcript: ${JSON.stringify(this.state.fullConversationForReport)}
+                      Quality Scores per turn: ${this.state.qualityScores.join(', ')}
+                      Create a report with: 1. A concise summary of the call. 2. A detailed assessment of the agent's performance based on S4 guidelines (strengths/debilidades), including how the marking scheme applies. 3. Self-healing recommendations for the system (e.g., "Suggest modifying complaint script to better handle X.").
+                      Return only a JSON object with keys "summary", "assessment", and "recommendations".`;
+
+                try {
+                    const responseText = await this.geminiAPI.generateContent(reportPrompt);
+                    const cleanedText = responseText.replace(/```json|```/g, '').trim();
+                    const reportData = JSON.parse(cleanedText);
+
+                    // Populate Report
+                    document.getElementById('report-summary').textContent = reportData.summary;
+                    
+                    const assessmentHtml = `
+                        <p class="mb-2"><strong class="font-semibold">Assessment:</strong> ${reportData.assessment}</p>
+                        <p><strong class="font-semibold">Self-Healing Suggestion:</strong> <span class="bg-blue-600 text-blue-100 p-1 rounded">${reportData.recommendations}</span></p>
+                    `;
+                    document.getElementById('organizer-assessment').innerHTML = assessmentHtml;
+                    
+                    const finalScore = this.state.qualityScores.length > 0 ? (this.state.qualityScores.reduce((a, b) => a + b, 0) / this.state.qualityScores.length).toFixed(0) : 'N/A';
+                    document.getElementById('report-metrics').innerHTML = `
+                        <p><strong>Final Average Score:</strong> ${finalScore}</p>
+                        <p><strong>Total Turns:</strong> ${this.state.turnCount}</p>
+                        <p><strong>Difficulty:</strong> ${this.state.currentScenario.difficulty}</p>
+                    `;
+
+                    this.renderQualityChart();
+
+                } catch (e) {
+                     console.error("Failed to generate report:", e);
+                     document.getElementById('report-summary').textContent = "Error generating report.";
+                }
+
+                // Decide if survey should be shown (e.g., 30% chance)
+                if (Math.random() < 0.3) {
+                    this.surveySection.classList.remove('hidden');
+                }
+                
+                this.reportModal.classList.remove('hidden');
+            }
+
+            renderQualityChart() {
+                const ctx = document.getElementById('quality-chart').getContext('2d');
+                if(window.qualityChartInstance) {
+                    window.qualityChartInstance.destroy();
+                }
+                window.qualityChartInstance = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: this.state.qualityScores.map((_, i) => `Turn ${i + 1}`),
+                        datasets: [{
+                            label: 'Quality Score',
+                            data: this.state.qualityScores,
+                            backgroundColor: this.state.qualityScores.map(score => {
+                                if (score >= 85) return 'rgba(16, 185, 129, 0.7)';
+                                if (score >= 60) return 'rgba(245, 158, 11, 0.7)';
+                                return 'rgba(239, 68, 68, 0.7)';
+                            }),
+                            borderColor: this.state.qualityScores.map(score => {
+                                if (score >= 85) return 'rgba(16, 185, 129, 1)';
+                                if (score >= 60) return 'rgba(245, 158, 11, 1)';
+                                return 'rgba(239, 68, 68, 1)';
+                            }),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: { y: { beginAtZero: true, max: 100, ticks: { color: 'white' } }, x: { ticks: { color: 'white' } } },
+                        plugins: { legend: { display: false }, title: { display: true, text: 'Quality Score per Interaction Turn', color: 'white'} }
+                    }
+                });
+            }
+            
+            exportReport() {
+                 const summary = document.getElementById('report-summary').textContent;
+                 const assessment = document.getElementById('organizer-assessment').innerText;
+                 const metrics = document.getElementById('report-metrics').innerText;
+                 const fullTranscript = this.state.fullConversationForReport.map(msg => `${msg.speaker}: ${msg.text}`).join('\n');
+
+                 const reportText = `
+CALL SIMULATION REPORT
+======================
+Date: ${new Date().toLocaleString()}
+Scenario: ${this.state.currentScenario.scenario}
+Customer: ${this.state.currentScenario.customerName}
+----------------------
+
+METRICS
+-------
+${metrics}
+
+ORGANIZER ASSESSMENT
+--------------------
+${assessment}
+
+CALL SUMMARY
+------------
+${summary}
+
+FULL TRANSCRIPT
+---------------
+${fullTranscript}
+                 `;
+
+                 const blob = new Blob([reportText.trim()], { type: 'text/plain' });
+                 const link = document.createElement('a');
+                 link.href = URL.createObjectURL(blob);
+                 link.download = `CallReport_${new Date().toISOString()}.txt`;
+                 link.click();
+                 URL.revokeObjectURL(link.href);
+            }
+        }
+
+        // --- SERVICES ---
+        class SpeechService {
+            constructor(getIsRecognizing, setIsRecognizing, onResult, onError, getSilenceThreshold) {
+                this.getIsRecognizing = getIsRecognizing;
+                this.setIsRecognizing = setIsRecognizing;
+                this.onResult = onResult;
+                this.onError = onError;
+                this.getSilenceThreshold = getSilenceThreshold; // Function to get live timeout value
+                this.silenceTimer = null; // Internal silence timer
+
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {
+                    console.error("Speech Recognition not supported.");
+                    return;
+                }
+                this.recognition = new SpeechRecognition();
+                this.recognition.interimResults = true;
+                this.recognition.continuous = true;
+
+                this.recognition.onstart = () => {
+                    this.setIsRecognizing(true);
+                    this.clearSilenceTimer(); // Clear timer on start
+                };
+                this.recognition.onend = () => {
+                    this.setIsRecognizing(false);
+                    this.clearSilenceTimer(); // Clear timer on end
+                };
+                this.recognition.onerror = (event) => this.onError(event.error);
+                this.recognition.onresult = (event) => {
+                    this.resetSilenceTimer(); // Reset timer on any speech result
+
+                    let finalTranscript = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            finalTranscript += event.results[i][0].transcript;
+                        }
+                    }
+                    if (finalTranscript) {
+                        this.onResult(finalTranscript);
+                    }
+                };
+            }
+
+            toggleRecognition(lang) {
+                if (this.getIsRecognizing()) {
+                    this.recognition.stop();
+                } else {
+                    this.recognition.lang = lang;
+                    this.recognition.start();
+                }
+            }
+
+            startRecognition() {
+                if (!this.getIsRecognizing()) {
+                    try {
+                        this.recognition.start();
+                    } catch (e) {
+                        console.error('Failed to start recognition:', e);
+                        this.onError('Failed to access microphone. Please check permissions.');
+                    }
+                }
+            }
+
+            stopRecognition() {
+                if(this.getIsRecognizing()) {
+                    this.recognition.stop();
+                }
+            }
+
+            // Methods to manage internal silence timer
+            resetSilenceTimer() {
+                this.clearSilenceTimer();
+                this.silenceTimer = setTimeout(() => {
+                    console.log('Silence detected - auto-sending message');
+                    this.onResult('send'); // Simulate 'send' command
+                }, this.getSilenceThreshold());
+            }
+
+            clearSilenceTimer() {
+                if (this.silenceTimer) {
+                    clearTimeout(this.silenceTimer);
+                    this.silenceTimer = null;
+                }
+            }
+        }
+
+        class GeminiAPIService {
+            constructor() {
+                // Use the Cloudflare Worker URL
+                this.API_URL = 'https://workers-playground-tiny-sky-5f02.amrassal91.workers.dev';
+            }
+
+            async generateContent(promptOrHistory) {
+                const payload = {
+                    contents: Array.isArray(promptOrHistory) ? promptOrHistory : [{ role: 'user', parts: [{ text: promptOrHistory }] }]
+                };
+                
+                try {
+                    const response = await fetch(this.API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) {
+                        // Attempt to parse error details if available
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(`API Error: ${response.statusText} - ${JSON.stringify(errorData)}`);
+                    }
+                    const data = await response.json();
+                    
+                    if (data.candidates && data.candidates.length > 0) {
+                        return data.candidates[0].content.parts[0].text;
+                    }
+                    return "(No AI response received)";
+
+                } catch (error) {
+                    console.error("Gemini API Error:", error);
+                    return `(Error: Could not get AI response - ${error.message})`;
+                }
+            }
+        }
+
+        // --- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            new AppController();
+        });
+    </script>
+</body>
+</html>
